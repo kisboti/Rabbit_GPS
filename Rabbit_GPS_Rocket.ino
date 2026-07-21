@@ -1,11 +1,10 @@
-
-
 #include <EEPROM.h>
 #include <SPI.h>
 #include <LoRa.h>
 #include <Adafruit_NeoPixel.h>
 #include <TinyGPS++.h>
 #include <Adafruit_BMP280.h>
+#include <Adafruit_BMP085.h>   // Handles both BMP085 and BMP180
 
 #define CS_PIN 29  // Chip Select pin
 #define SCK_PIN 2 // Clock pin
@@ -24,14 +23,66 @@ int Power = 11;
 
 Adafruit_NeoPixel pixel(NUM_PIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
 TinyGPSPlus gps;
-Adafruit_BMP280 bmp; // I2C
 
+// Both sensor objects are declared; only one gets used at runtime,
+// decided by auto-detection in setup().
+Adafruit_BMP280 bmp280; // I2C
+Adafruit_BMP085 bmp180; // I2C (Adafruit_BMP085 lib also drives BMP180)
+
+// Which sensor is actually present
+enum BaroType { BARO_NONE, BARO_280, BARO_180 };
+BaroType baroType = BARO_NONE;
 
 String pos;
 String posprev = "no_fix";
 String latlon;
 int counter=0;
 double basealt;
+
+// ---- Unified barometer helpers ---------------------------------------
+// readBaroTemperature(): returns °C regardless of which chip is fitted
+double readBaroTemperature() {
+  if (baroType == BARO_280) {
+    return bmp280.readTemperature();
+  } else if (baroType == BARO_180) {
+    return bmp180.readTemperature();
+  }
+  return NAN;
+}
+
+// readBaroAltitude(): returns meters above the sea-level pressure given in hPa,
+// regardless of which chip is fitted (handles the Pa/hPa unit difference
+// between the two Adafruit libraries internally)
+double readBaroAltitude(double seaLevelhPa) {
+  if (baroType == BARO_280) {
+    return bmp280.readAltitude(seaLevelhPa);
+  } else if (baroType == BARO_180) {
+    // Adafruit_BMP085 library's readAltitude() expects Pascals, not hPa
+    return bmp180.readAltitude(seaLevelhPa * 100.0);
+  }
+  return NAN;
+}
+
+// Tries BMP280 first (addr 0x76, then 0x77), then falls back to BMP180/BMP085 (addr 0x77)
+void initBarometer() {
+  if (bmp280.begin(0x76) || bmp280.begin(0x77)) {
+    baroType = BARO_280;
+    Serial.println("BMP280 detected.");
+    bmp280.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+                        Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
+                        Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
+                        Adafruit_BMP280::FILTER_X16,      /* Filtering. */
+                        Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+  } else if (bmp180.begin()) {
+    baroType = BARO_180;
+    Serial.println("BMP180 detected.");
+  } else {
+    baroType = BARO_NONE;
+    Serial.println("No barometer (BMP280/BMP180) detected!");
+  }
+}
+// ------------------------------------------------------------------------
+
 void setup() {
   int32_t freq = 864;
   Serial.begin(115200);
@@ -97,11 +148,12 @@ void setup() {
   Serial.print(freq);
   if (!LoRa.begin(freq*1000000)) {
     Serial.println("Starting LoRa failed!");
-    while (1);
+    
 
     //Set neopixel to red
     pixel.setPixelColor(0, pixel.Color(255, 0, 0));
     pixel.show();
+    while (1);
   }
   LoRa.setSpreadingFactor(12);
   LoRa.setCodingRate4(8);
@@ -109,22 +161,11 @@ void setup() {
   pixel.setPixelColor(0, pixel.Color(0, 255, 255));
   pixel.show();
 
-  //BMP
+  //BMP (auto-detect BMP280 or BMP180) ==============================================
+  initBarometer();
 
-  unsigned status;
-  status = bmp.begin(0x76);
-  if (!status) {
-    Serial.println("BMP280 not connected!");
-  }
-  /* Default settings from datasheet. */
-  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
-                  Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
-                  Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
-                  Adafruit_BMP280::FILTER_X16,      /* Filtering. */
-                  Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
-  
   delay(5000);
-  basealt = bmp.readAltitude(1013.25);
+  basealt = readBaroAltitude(1013.25);
   Serial.print("Base: ");
   Serial.println(basealt);
 }
@@ -166,15 +207,15 @@ void loop() {
 
   transmit=String(counter)+";"+latlon+";";
 
-  //BMP280 data =============================================================================================================
+  //Barometer data (BMP280 or BMP180) ========================================================================
 
-  double temp = bmp.readTemperature();
+  double temp = readBaroTemperature();
   Serial.print(F("Temperature = "));
   Serial.print(temp);
   Serial.println(" *C");
   transmit=transmit+String(temp)+';';
 
-  double alt = bmp.readAltitude(1013.25)-basealt;
+  double alt = readBaroAltitude(1013.25)-basealt;
   Serial.print(F("Approx altitude = "));
   Serial.print(alt); /* Adjusted to local forecast! */
   Serial.println(" m");

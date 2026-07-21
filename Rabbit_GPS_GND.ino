@@ -5,19 +5,15 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-#define CS_PIN 29  // Chip Select pin
-#define SCK_PIN 2 // Clock pin
-#define MOSI_PIN 3 // Master Out Slave In pin
-#define MISO_PIN 4 // Master In Slave Out pin
+#define CS_PIN 29
+#define SCK_PIN 2
+#define MOSI_PIN 3
+#define MISO_PIN 4
 
-// OLED display width and height, in pixels
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-
-// I2C address of the display (usually 0x3C or 0x3D)
 #define OLED_ADDRESS 0x3C
 
-// Declaration for SSD1306 display connected using I2C (SDA, SCL)
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 String count="";
@@ -30,8 +26,8 @@ String coordprev="no fix\n---";
 #define BLUE_PIN   25
 
 int Power = 11;
-#define LED_PIN    12     // Built-in RGB LED pin on XIAO RP2040
-#define NUM_PIXELS 1      // Only one built-in LED
+#define LED_PIN    12
+#define NUM_PIXELS 1
 Adafruit_NeoPixel pixel(NUM_PIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 #define FreqPIN 26
@@ -47,19 +43,13 @@ void setup() {
   delay(300);
   Serial.println("LoRa Receiver");
 
-  //LED =============================================================================
-  
-  pixel.begin();           // Initialize NeoPixel
+  pixel.begin();
   pinMode(Power,OUTPUT);
   digitalWrite(Power, HIGH);
-  pixel.setBrightness(255); // Optional: set brightness (0-255)
-  
+  pixel.setBrightness(255);
 
-  // Initialize EEPROM emulation (allocate 512 bytes)
   EEPROM.begin(512);
 
-  
-  //Frequency change =================================================================
   pinMode(FreqPIN, INPUT_PULLUP);
   String freqSTR = "";
 
@@ -70,7 +60,6 @@ void setup() {
     char c;
     pixel.setPixelColor(0, pixel.Color(255, 255, 255));
     pixel.show();
-    //delay(10000);
     do {
       if(Serial.available()>0)
       { 
@@ -90,28 +79,18 @@ void setup() {
   Serial.println(storedNumber);
   freq=storedNumber;
 
-  //Display =======================================================================================================
-
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
     Serial.println(F("SSD1306 allocation failed"));
-    for (;;); // Don't proceed, loop forever
+    for (;;);
   }
 
-  // Clear the buffer
   display.clearDisplay();
-
-  // Set text size and color
-  display.setTextSize(2);      // Normal 1:1 pixel scale
-  display.setTextColor(SSD1306_WHITE); // Draw white text
-
-  //LoRa =========================================================================================================
-
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
 
   LoRa.setPins(CS_PIN,28,27);
-  if (!LoRa.begin(freq*1000)) {
+  if (!LoRa.begin(freq*1000000)) {
     Serial.println("Starting LoRa failed!");
-
-    //Display error on screen
     display.setCursor(0, 0);
     display.println("LoRa fail");
     display.display();
@@ -119,9 +98,9 @@ void setup() {
   }
   LoRa.setSpreadingFactor(12);
   LoRa.setCodingRate4(8);
+  LoRa.enableCrc();
   Serial.println("LoRa Start");
 
-  //Display on screen
   display.clearDisplay();
   display.setCursor(0, 0);
   display.println("LoRa Start");
@@ -129,19 +108,21 @@ void setup() {
 }
 
 void loop() {
-  // try to parse packetoo,
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
-    // received a packet
     Serial.print("radio rx ");
     String data="";
 
-    // read packet
     while (LoRa.available()) {
       char c=LoRa.read();
       Serial.print(c);
       data=data+c;
+    }
 
+    // Discard corrupt packets
+    if(data.charAt(data.length() - 1) != ';') {
+      Serial.println("\nCorrupt packet, discarded");
+      return;
     }
 
     display.setTextSize(2);
@@ -167,7 +148,7 @@ void loop() {
     String alt = data.substring(startIndex, endIndex);
     startIndex = endIndex + 1;
 
-    if(coord=="no_fix" || data.charAt(data.length() - 1) != ';')
+    if(coord=="no_fix")
     {
       display.println(coordprev);
     }
@@ -180,7 +161,6 @@ void loop() {
     display.display();
 
     display.setTextSize(1);
-    //display.setCursor(0, 3);
     display.println("ID: " + count);
     display.println("Alt: " + alt + " m");
     display.println("Temp: " + temp + " C");
@@ -188,8 +168,6 @@ void loop() {
 
     display.display();
 
-
-    // print RSSI of packet
     Serial.print("\n\rRSSI ");
     Serial.println(LoRa.packetRssi());
   }
